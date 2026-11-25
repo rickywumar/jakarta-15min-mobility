@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jakarta 15-Minute Mobility Pulse</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero-header">
+    <div class="container hero-inner">
+      <div class="brand-row">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="38" height="38" fill="none">
+            <rect width="40" height="40" rx="11" fill="#FF8C2E" fill-opacity="0.18" stroke="#FF8C2E" stroke-width="1.5"/>
+            <circle cx="20" cy="20" r="11" stroke="#FF8C2E" stroke-width="1.8" stroke-dasharray="3 2.5"/>
+            <circle cx="20" cy="20" r="6.5" fill="#FF8C2E" fill-opacity="0.28" stroke="#FFD166" stroke-width="1.5"/>
+            <circle cx="20" cy="20" r="2.6" fill="#FFFFFF"/>
+          </svg>
+        </div>
+        <div>
+          <div class="eyebrow">DKI JAKARTA · STREET-NETWORK SERVICE AREA EDITION</div>
+          <h1>Jakarta 15-Minute Mobility Pulse</h1>
+          <p class="subtitle">Real pedestrian walking Service Areas across MRT, LRT, KRL, KAI, TransJakarta BRT &amp; Mikrotrans</p>
+        </div>
+        <div class="header-actions">
+          <span class="status-pill" id="data-timestamp">Loading dataset…</span>
+          <button type="button" class="theme-btn" id="theme-toggle" aria-label="Toggle light or dark mode">
+            <span id="theme-icon">☾</span>
+            <span id="theme-label">Dark mode</span>
+          </button>
+        </div>
+      </div>
+
+      <nav class="section-nav" aria-label="Dashboard sections">
+        <span class="nav-label">Sections</span>
+        <a href="#overview">Overview</a>
+        <a href="#checker">15-Min Checker</a>
+        <a href="#atlas">Atlas</a>
+        <a href="#districts">Districts</a>
+        <a href="#sources">Sources</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container main-content">
+    <!-- SECTION 1: OVERVIEW -->
+    <section id="overview" class="section-block">
+      <div class="section-head">
+        <h2>Citywide Pulse</h2>
+        <span class="badge-muted">42 mainland Kecamatan · 5 Kota Administrasi</span>
+      </div>
+      <p class="diagnosis-headline" id="diagnosis-headline">
+        Loading Jakarta transit coverage across rapid rail, BRT corridors, and Mikrotrans feeders…
+      </p>
+
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <div class="kpi-label">Rapid Transit Hubs</div>
+          <div class="kpi-value" id="kpi-rapid-stops">—</div>
+          <div class="kpi-sub" id="kpi-rapid-sub">MRT · LRT · KRL · KAI · TJ BRT</div>
+          <div class="kpi-bar"><span id="kpi-rapid-bar" style="width: 0%"></span></div>
+        </article>
+
+        <article class="kpi-card">
+          <div class="kpi-label">Feeder &amp; Mikrotrans Stops</div>
+          <div class="kpi-value" id="kpi-feeder-stops">—</div>
+          <div class="kpi-sub" id="kpi-feeder-sub">TransJakarta Non-BRT &amp; JakLingko</div>
+          <div class="kpi-bar kpi-bar-green"><span id="kpi-feeder-bar" style="width: 0%"></span></div>
+        </article>
+
+        <article class="kpi-card">
+          <div class="kpi-label">Rapid 15-Min Coverage</div>
+          <div class="kpi-value" id="kpi-rapid-cov">—</div>
+          <div class="kpi-sub" id="kpi-rapid-cov-sub">Mainland area within ~15 min walk of rapid transit</div>
+          <div class="kpi-bar kpi-bar-sky"><span id="kpi-rapid-cov-bar" style="width: 0%"></span></div>
+        </article>
+
+        <article class="kpi-card">
+          <div class="kpi-label">All-Mode 15-Min Coverage</div>
+          <div class="kpi-value" id="kpi-all-cov">—</div>
+          <div class="kpi-sub" id="kpi-all-cov-sub">Including Non-BRT &amp; Mikrotrans feeders</div>
+          <div class="kpi-bar kpi-bar-amber"><span id="kpi-all-cov-bar" style="width: 0%"></span></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 2: INTERACTIVE 15-MINUTE SERVICE AREA CHECKER -->
+    <section id="checker" class="section-block">
+      <div class="section-head">
+        <div>
+          <h2>15-Minute Walking Service Area Checker</h2>
+          <p class="section-lead">
+            Type any Jakarta address or landmark, pick a neighbourhood preset, or click anywhere on the map to trace a real pedestrian street-network Service Area (accounting for rivers, canals, toll roads, and street blocks).
+          </p>
+        </div>
+        <span class="routing-pill" id="service-status">Ready — click map or search</span>
+      </div>
+
+      <!-- Search + Presets -->
+      <div class="checker-toolbar">
+        <div class="search-wrap">
+          <div class="search-input-group">
+            <input
+              type="text"
+              id="search-input"
+              placeholder="Search Jakarta address, landmark, or neighbourhood (e.g. Kemang, Grand Indonesia, Tebet)…"
+              autocomplete="off"
+              aria-label="Search Jakarta address or place"
+            />
+            <button type="button" id="search-btn" class="primary-btn">Check 15-min walk</button>
+          </div>
+          <ul class="search-dropdown hidden" id="search-results" role="listbox"></ul>
+        </div>
+
+        <div class="presets-row" id="preset-chips">
+          <span class="presets-label">Try:</span>
+        </div>
+      </div>
+
+      <!-- Map Layer Controls -->
+      <div class="map-controls-bar">
+        <div class="control-group">
+          <span class="control-label">Modes</span>
+          <div class="mode-pills" id="mode-toggles"></div>
+        </div>
+
+        <div class="control-group control-selects">
+          <label class="select-wrap">
+            <span>District layer</span>
+            <select id="choropleth-select">
+              <option value="none" selected>None (outlines only)</option>
+              <option value="rapid_cov_pct">Rapid 15-min coverage %</option>
+              <option value="all_cov_pct">All-mode 15-min coverage %</option>
+              <option value="feeder_boost_pct">Mikrotrans feeder boost (% pts)</option>
+              <option value="rapid_per_km2">Rapid stops per km²</option>
+            </select>
+          </label>
+
+          <label class="select-wrap">
+            <span>Zoom to Kota</span>
+            <select id="kota-select">
+              <option value="all">All DKI Jakarta (42)</option>
+              <option value="Jakarta Pusat">Jakarta Pusat</option>
+              <option value="Jakarta Selatan">Jakarta Selatan</option>
+              <option value="Jakarta Timur">Jakarta Timur</option>
+              <option value="Jakarta Barat">Jakarta Barat</option>
+              <option value="Jakarta Utara">Jakarta Utara</option>
+            </select>
+          </label>
+
+          <label class="toggle-chip" title="Overlay a naive 1,200m straight-line circle to compare against real street-network reach">
+            <input type="checkbox" id="compare-circle-toggle" />
+            <span>Compare vs. straight-line circle</span>
+          </label>
+
+          <button type="button" id="clear-sa-btn" class="ghost-btn">Clear pin</button>
+        </div>
+      </div>
+
+      <!-- Map + Scorecard Split -->
+      <div class="checker-grid">
+        <div class="map-shell">
+          <div id="map" role="application" aria-label="Jakarta interactive 15-minute walking service area map"></div>
+          <div class="map-legend" id="map-legend">
+            <div class="legend-title">Walkable Road Network</div>
+            <div class="legend-items">
+              <span><i class="swatch sw-5"></i> ≤ 5 min</span>
+              <span><i class="swatch sw-10"></i> 5–10 min</span>
+              <span><i class="swatch sw-15"></i> 10–15 min</span>
+              <span id="legend-circle-item" class="hidden"><i class="swatch sw-circle"></i> 1.2 km buffer</span>
+            </div>
+            <div class="legend-choropleth" id="choropleth-legend"></div>
+          </div>
+          <div class="map-tip">Tip: Click anywhere on the map or drag the orange pin to test a new spot.</div>
+        </div>
+
+        <aside class="scorecard" id="scorecard" aria-live="polite">
+          <div class="scorecard-top">
+            <span class="verdict-badge verdict-neutral" id="verdict-badge">Checking Bundaran HI…</span>
+            <div class="place-title" id="place-title">Bundaran HI</div>
+            <div class="place-meta" id="place-meta">Jakarta Pusat · -6.19496, 106.82307</div>
+            <p class="verdict-desc" id="verdict-desc">
+              Computing real pedestrian street-network reach from OpenStreetMap…
+            </p>
+          </div>
+
+          <div class="score-metrics">
+            <div class="score-metric">
+              <span class="sm-label">15-Min Walk Area</span>
+              <strong class="sm-val" id="metric-sa-area">—</strong>
+            </div>
+            <div class="score-metric" title="Actual 15-minute street-network walk area divided by an ideal 1,200m circle (4.52 km²)">
+              <span class="sm-label">Street Connectivity</span>
+              <strong class="sm-val" id="metric-connectivity">—</strong>
+            </div>
+            <div class="score-metric">
+              <span class="sm-label">Stops Reachable</span>
+              <strong class="sm-val" id="metric-stops-count">—</strong>
+            </div>
+          </div>
+
+          <div class="mode-breakdown-wrap">
+            <div class="panel-subhead">Reachable by mode</div>
+            <div class="mode-breakdown-grid" id="mode-breakdown"></div>
+          </div>
+
+          <div class="stops-list-wrap">
+            <div class="stops-list-head">
+              <span class="panel-subhead">Stops inside 15-min walk</span>
+              <div class="stop-filter-pills" id="stop-filter-pills">
+                <button type="button" class="filter-pill active" data-filter="all">All</button>
+                <button type="button" class="filter-pill" data-filter="5">≤ 5m</button>
+                <button type="button" class="filter-pill" data-filter="rapid">Rapid</button>
+                <button type="button" class="filter-pill" data-filter="mikrotrans">Mikrotrans</button>
+              </div>
+            </div>
+            <ul class="reachable-stops-list" id="reachable-stops-list"></ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- SECTION 3: ATLAS (6 SMALL MULTIPLES) -->
+    <section id="atlas" class="section-block">
+      <div class="section-head">
+        <div>
+          <h2>Atlas — Six Ways to Read Jakarta’s Transit Reach</h2>
+          <p class="section-lead">
+            The same 42 mainland Kecamatan drawn at identical scale. Click any plate to load that view in the main map above.
+          </p>
+        </div>
+      </div>
+      <div class="atlas-grid" id="atlas-grid"></div>
+    </section>
+
+    <!-- SECTION 4: DISTRICTS TABLE -->
+    <section id="districts" class="section-block">
+      <div class="section-head">
+        <div>
+          <h2>42 Kecamatan Coverage Directory</h2>
+          <p class="section-lead">
+            Click a column header to rank districts, or click any row to zoom the map to that Kecamatan.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-controls">
+        <input type="search" id="district-search" placeholder="Filter Kecamatan…" aria-label="Filter Kecamatan table" />
+        <div class="kota-filter-pills" id="kota-filter-pills">
+          <button type="button" class="filter-pill active" data-kota="all">All (42)</button>
+          <button type="button" class="filter-pill" data-kota="Jakarta Pusat">Pusat</button>
+          <button type="button" class="filter-pill" data-kota="Jakarta Selatan">Selatan</button>
+          <button type="button" class="filter-pill" data-kota="Jakarta Timur">Timur</button>
+          <button type="button" class="filter-pill" data-kota="Jakarta Barat">Barat</button>
+          <button type="button" class="filter-pill" data-kota="Jakarta Utara">Utara</button>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table class="districts-table" id="districts-table">
+          <thead>
+            <tr>
+              <th data-sort="kecamatan">Kecamatan</th>
+              <th data-sort="kota">Kota</th>
+              <th data-sort="area_km2" class="num">Area km²</th>
+              <th data-sort="rapid_cov_pct" class="num active-sort">Rapid 15m % ▼</th>
+              <th data-sort="all_cov_pct" class="num">All-Mode 15m %</th>
+              <th data-sort="feeder_boost_pct" class="num">Feeder Boost</th>
+              <th data-sort="cnt_rail" class="num">Rail</th>
+              <th data-sort="cnt_tj_brt" class="num">TJ BRT</th>
+              <th data-sort="cnt_mikrotrans" class="num">Mikrotrans</th>
+              <th data-sort="stops_per_km2" class="num">Stops / km²</th>
+            </tr>
+          </thead>
+          <tbody id="districts-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 5: SOURCES & METHODOLOGY -->
+    <section id="sources" class="section-block">
+      <div class="section-head">
+        <h2>Sources, Assumptions &amp; QGIS Export</h2>
+      </div>
+      <div class="sources-grid">
+        <article class="source-card">
+          <h3>Transit Feeds</h3>
+          <ul>
+            <li><strong>TransJakarta BRT, Non-BRT &amp; Mikrotrans:</strong> Official PT Transportasi Jakarta static GTFS (<code>gtfs.transjakarta.co.id</code>, CC BY 4.0), merging opposite-side stops sharing mode &amp; name within 85 m.</li>
+            <li><strong>MRT Jakarta, LRT Jakarta, LRT Jabodebek, KRL &amp; KAI:</strong> OpenStreetMap Overpass railway stations cross-checked against active station registries (excluding unbuilt corridors).</li>
+            <li><strong>Border Buffer:</strong> Stops up to ~1.2 km outside DKI Jakarta's border are retained so outer Kecamatan residents still see reachable stations within a 15-minute walk.</li>
+          </ul>
+        </article>
+
+        <article class="source-card">
+          <h3>Service Area vs. Straight-Line Buffer</h3>
+          <ul>
+            <li><strong>Live Checker:</strong> Powered by the <strong>Valhalla Pedestrian Routing Engine</strong> (<code>valhalla1.openstreetmap.de/isochrone</code>, OpenStreetMap street/footpath graph) at 5, 10, and 15-minute walking contours.</li>
+            <li><strong>Why Service Area matters in Jakarta:</strong> Rivers/canals (Ciliwung, Banjir Kanal), toll roads, rail corridors, and superblocks block direct walking paths. Toggle <em>Compare vs. straight-line circle</em> to measure the <strong>Street Connectivity Ratio</strong>.</li>
+            <li><strong>Citywide Kecamatan Ranking:</strong> Uses a 250 m interior point grid with a 920 m street-detour threshold (1,200 m at 4.8 km/h divided by a 1.3× Jakarta detour factor).</li>
+          </ul>
+        </article>
+
+        <article class="source-card">
+          <h3>Open in QGIS</h3>
+          <p>
+            Both spatial layers in <code>data/</code> are standard WGS84 GeoJSON files you can drag straight into <strong>QGIS</strong> to style or run custom network analyses:
+          </p>
+          <ul>
+            <li><code>data/kecamatan.geojson</code> — 42 mainland polygons with all coverage &amp; density attributes</li>
+            <li><code>data/stops.geojson</code> — Complete point layer with mode, routes, and district tags</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>Jakarta 15-Minute Mobility Pulse · Built with Leaflet, Turf.js &amp; Valhalla</span>
+      <span id="footer-meta">Open data prototype</span>
+    </div>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin=""></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

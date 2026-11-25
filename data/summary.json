@@ -1,0 +1,159 @@
+{
+  "generated_at": "2026-11-25 10:57 UTC",
+  "kecamatan_count": 42,
+  "kota_count": 5,
+  "total_area_km2": 643.79,
+  "grid_points_sampled": 10369,
+  "walk_radius_estimate_m": 920,
+  "city_rapid_cov_pct": 46.4,
+  "city_all_cov_pct": 97.2,
+  "stops_in_dki": 7213,
+  "stops_total_with_border": 7380,
+  "rapid_stops_in_dki": 326,
+  "feeder_stops_in_dki": 6887,
+  "mode_totals_dki": {
+    "mrt": 13,
+    "lrt": 18,
+    "krl": 44,
+    "train": 2,
+    "tj_brt": 249,
+    "tj_nonbrt": 2239,
+    "mikrotrans": 4648
+  },
+  "mode_totals_all": {
+    "mrt": 13,
+    "lrt": 19,
+    "krl": 49,
+    "train": 2,
+    "tj_brt": 252,
+    "tj_nonbrt": 2336,
+    "mikrotrans": 4709
+  },
+  "best_rapid_kec": {
+    "kecamatan": "Sawah Besar",
+    "kota": "Jakarta Pusat",
+    "pct": 100.0
+  },
+  "worst_rapid_kec": {
+    "kecamatan": "Cilincing",
+    "kota": "Jakarta Utara",
+    "pct": 0.8
+  },
+  "best_all_kec": {
+    "kecamatan": "Gambir",
+    "kota": "Jakarta Pusat",
+    "pct": 100.0
+  },
+  "worst_all_kec": {
+    "kecamatan": "Cipayung",
+    "kota": "Jakarta Timur",
+    "pct": 82.5
+  },
+  "modes": [
+    {
+      "id": "mrt",
+      "label": "MRT Jakarta",
+      "short": "MRT",
+      "rapid": true,
+      "color": "#FF6B6B"
+    },
+    {
+      "id": "lrt",
+      "label": "LRT Jakarta / Jabodebek",
+      "short": "LRT",
+      "rapid": true,
+      "color": "#C084FC"
+    },
+    {
+      "id": "krl",
+      "label": "KRL Commuter Line",
+      "short": "KRL",
+      "rapid": true,
+      "color": "#F59E0B"
+    },
+    {
+      "id": "train",
+      "label": "KAI Intercity / Whoosh",
+      "short": "Train",
+      "rapid": true,
+      "color": "#EC4899"
+    },
+    {
+      "id": "tj_brt",
+      "label": "TransJakarta BRT",
+      "short": "TJ BRT",
+      "rapid": true,
+      "color": "#38BDF8"
+    },
+    {
+      "id": "tj_nonbrt",
+      "label": "TransJakarta Non-BRT",
+      "short": "Non-BRT",
+      "rapid": false,
+      "color": "#34D399"
+    },
+    {
+      "id": "mikrotrans",
+      "label": "Mikrotrans (JakLingko)",
+      "short": "Mikrotrans",
+      "rapid": false,
+      "color": "#A3E635"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Bundaran HI",
+      "desc": "Central CBD · MRT + TJ Hub",
+      "lat": -6.19496,
+      "lon": 106.82307
+    },
+    {
+      "name": "Blok M",
+      "desc": "South Transit Hub · MRT + TJ",
+      "lat": -6.24425,
+      "lon": 106.80054
+    },
+    {
+      "name": "Kemang",
+      "desc": "South · Canal & Feeder Zone",
+      "lat": -6.26067,
+      "lon": 106.81414
+    },
+    {
+      "name": "Tebet Eco Park",
+      "desc": "South · Ciliwung / KRL Corridor",
+      "lat": -6.23819,
+      "lon": 106.85296
+    },
+    {
+      "name": "PIK (Pantai Indah Kapuk)",
+      "desc": "North · Coastal Car-Oriented",
+      "lat": -6.10895,
+      "lon": 106.74074
+    },
+    {
+      "name": "Kelapa Gading",
+      "desc": "North · LRT Jakarta Corridor",
+      "lat": -6.15897,
+      "lon": 106.90613
+    },
+    {
+      "name": "Jagakarsa",
+      "desc": "South Outer · Rail & Mikrotrans",
+      "lat": -6.33381,
+      "lon": 106.82195
+    },
+    {
+      "name": "Cakung",
+      "desc": "East Outer · Industrial & Border",
+      "lat": -6.18592,
+      "lon": 106.94386
+    }
+  ],
+  "sources": {
+    "transjakarta": "PT TransJakarta Official GTFS (CC BY 4.0)",
+    "rail": "OpenStreetMap Overpass + Verified Active MRT/LRT/KAI Registry",
+    "boundaries": "DKI Jakarta Mainland Kecamatan GeoJSON (42 districts)",
+    "isochrone": "Valhalla Pedestrian Routing Engine (OpenStreetMap)"
+  }
+}
