@@ -694,8 +694,8 @@ code {
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
-  max-height: 625px;
+  gap: 0.78rem;
+  max-height: 700px;
 }
 
 .verdict-badge {
@@ -777,15 +777,31 @@ code {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.42rem 0.6rem;
+  width: 100%;
+  padding: 0.44rem 0.6rem;
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: 8px;
   font-size: 0.79rem;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.12s ease;
+}
+
+.mode-card:not(.zero):hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.mode-card.active {
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 1px currentColor;
 }
 
 .mode-card.zero {
-  opacity: 0.5;
+  opacity: 0.45;
+  cursor: default;
 }
 
 .mode-card-left {
@@ -804,6 +820,322 @@ code {
 .mode-card-right strong {
   color: var(--text);
   font-size: 0.85rem;
+}
+
+.mode-pill-count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.05rem 0.36rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+}
+
+/* Reachable mode routes drawer */
+.mode-routes-drawer {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.58rem 0.68rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.mrd-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.mrd-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.mrd-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.mrd-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.16rem 0.52rem;
+  font-size: 0.71rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mrd-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mrd-pills,
+.stop-route-pills,
+.popup-route-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.32rem;
+}
+
+.route-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 6px;
+  padding: 0.16rem 0.46rem;
+  font-size: 0.73rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1.5px solid var(--route-color, #0284C7);
+  background: color-mix(in srgb, var(--route-color, #0284C7) 12%, transparent);
+  color: var(--route-color, #0284C7);
+  font-family: inherit;
+  line-height: 1.25;
+  transition: transform 0.1s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.route-chip:hover,
+.route-chip.active {
+  background: var(--route-color, #0284C7);
+  color: #FFFFFF;
+}
+
+.route-chip-all {
+  --route-color: #475569;
+  font-weight: 600;
+}
+
+/* Active Route Direction Banner on Map */
+.active-route-bar {
+  position: absolute;
+  bottom: 34px;
+  right: 12px;
+  z-index: 650;
+  max-width: min(390px, calc(100% - 24px));
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(8px);
+  color: #101A3B;
+  border: 1px solid rgba(19, 38, 96, 0.16);
+  border-radius: 12px;
+  padding: 0.62rem 0.78rem;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+:root[data-theme="dark"] .active-route-bar {
+  background: rgba(12, 20, 52, 0.94);
+  color: #EEF3FF;
+  border-color: rgba(148, 173, 255, 0.28);
+}
+
+.arb-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.arb-badge {
+  display: inline-block;
+  padding: 0.22rem 0.55rem;
+  border-radius: 7px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  background: #0284C7;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.arb-direction {
+  font-family: "Archivo", sans-serif;
+  font-weight: 700;
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
+.arb-sub {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.12rem;
+}
+
+.arb-multi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.arb-stops-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.34rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.arb-stops-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.arb-stops-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  max-height: 185px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.16rem;
+}
+
+.arb-stop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.26rem 0.44rem;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.arb-stop-row:hover {
+  background: var(--surface-hover);
+}
+
+.arb-stop-row.board-stop {
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
+.arb-stop-num {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  width: 1.25rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.arb-stop-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--route-color, #0284C7);
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.arb-stop-row.board-stop .arb-stop-dot {
+  background: var(--route-color, #0284C7);
+}
+
+.arb-stop-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arb-board-tag {
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.arb-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.arb-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.2rem 0.52rem;
+  font-size: 0.73rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.arb-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.arb-btn.arb-close {
+  margin-left: auto;
+  color: var(--red);
+}
+
+.route-terminal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #FFFFFF;
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  white-space: nowrap;
+}
+
+.popup-route-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.popup-all-routes-btn {
+  margin-top: 6px;
+  border: 1px solid #CBD5E1;
+  background: #F8FAFC;
+  color: #0F172A;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.popup-all-routes-btn:hover {
+  border-color: #0284C7;
+  color: #0284C7;
 }
 
 .stops-list-wrap {

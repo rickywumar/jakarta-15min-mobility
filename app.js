@@ -3,7 +3,9 @@
 const STATE = {
   summary: null,
   kecGeojson: null,
-  stops: [], // { id, name, lat, lon, mode, modeIdx, routes, kec, inDki }
+  stops: [], // { id, name, lat, lon, mode, modeIdx, routeKeys, routes, kec, inDki }
+  stopsById: new Map(),
+  routesByKey: {},
   modesById: {},
   enabledModes: new Set(["mrt", "lrt", "krl", "train", "tj_brt", "tj_nonbrt"]),
   mikroExplicit: false,
@@ -15,6 +17,10 @@ const STATE = {
   tileOverlayLayer: null,
   canvasRenderer: null,
   kecLayer: null,
+  routeLayer: null,
+  walkConnectorLayer: null,
+  routeStopsLayer: null,
+  routeTerminalLayer: null,
   stopsLayer: null,
   saLayer: null,
   circleLayer: null,
@@ -23,6 +29,11 @@ const STATE = {
   saPolygons: null, // { 15: feature } for area/connectivity calculation & fallback
   saRoadEdges: null, // array of { minLat, maxLat, minLon, maxLon, coordsLatLon, duration }
   saMatches: [], // { stop, tier, walkMin }
+  activeRoutes: [], // array of route keys currently drawn
+  activeBoardStop: null, // { stop, walkMin }
+  walkRouteCache: new Map(),
+  walkRouteReqId: 0,
+  selectedModeFilter: null, // mode id selected in Scorecard
   stopFilter: "all",
   sortCol: "rapid_cov_pct",
   sortDir: "desc",
@@ -81,10 +92,11 @@ function getChoroplethColor(metric, value) {
 
 async function init() {
   try {
-    const [summaryRes, kecRes, stopsRes] = await Promise.all([
+    const [summaryRes, kecRes, stopsRes, routesRes] = await Promise.all([
       fetch("data/summary.json"),
       fetch("data/kecamatan.geojson"),
       fetch("data/stops.min.json"),
+      fetch("data/routes.min.json"),
     ]);
 
     if (!summaryRes.ok || !kecRes.ok || !stopsRes.ok) {
@@ -94,6 +106,10 @@ async function init() {
     STATE.summary = await summaryRes.json();
     STATE.kecGeojson = await kecRes.json();
     const stopsCompact = await stopsRes.json();
+    if (routesRes.ok) {
+      const routesPayload = await routesRes.json();
+      STATE.routesByKey = routesPayload.routes || {};
+    }
 
     STATE.summary.modes.forEach((m) => {
       STATE.modesById[m.id] = m;
@@ -102,17 +118,26 @@ async function init() {
     const modeNames = stopsCompact.modes;
     STATE.stops = stopsCompact.stops.map((row) => {
       const mode = modeNames[row[4]];
-      return {
+      const routeKeys = Array.isArray(row[5])
+        ? row[5]
+        : String(row[5] || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const stObj = {
         id: row[0],
         name: row[1],
         lat: row[2],
         lon: row[3],
         modeIdx: row[4],
         mode,
-        routes: row[5] || "",
+        routeKeys,
+        routes: routeKeys.join(", "),
         kec: row[6] || "",
         inDki: row[7] === 1,
       };
+      STATE.stopsById.set(stObj.id, stObj);
+      return stObj;
     });
 
     renderOverview();
@@ -195,6 +220,11 @@ function initMap() {
         { sticky: true }
       );
       layer.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (STATE.activeRoutes.length > 0) {
+          clearActiveRoutes(true);
+          return;
+        }
         runServiceAreaCheck(e.latlng.lat, e.latlng.lng, `${p.kecamatan} pin`, p.kota);
       });
     },
@@ -202,10 +232,43 @@ function initMap() {
 
   STATE.circleLayer = L.featureGroup().addTo(STATE.map);
   STATE.saLayer = L.featureGroup().addTo(STATE.map);
+  STATE.routeLayer = L.featureGroup().addTo(STATE.map);
+  STATE.walkConnectorLayer = L.featureGroup().addTo(STATE.map);
   STATE.stopsLayer = L.layerGroup().addTo(STATE.map);
+  STATE.routeStopsLayer = L.featureGroup().addTo(STATE.map);
+  STATE.routeTerminalLayer = L.featureGroup().addTo(STATE.map);
+
+  // Delegate clicks on route buttons inside Leaflet stop popups
+  STATE.map.getContainer().addEventListener("click", (e) => {
+    const rBtn = e.target.closest(".popup-route-btn");
+    if (rBtn) {
+      e.stopPropagation();
+      const rkey = rBtn.dataset.rkey;
+      const stop = STATE.stopsById.get(rBtn.dataset.stopId) || null;
+      if (rkey) {
+        STATE.map.closePopup();
+        showRoutesOnMap([rkey], stop, true);
+      }
+      return;
+    }
+    const allBtn = e.target.closest(".popup-all-routes-btn");
+    if (allBtn) {
+      e.stopPropagation();
+      const stop = STATE.stopsById.get(allBtn.dataset.stopId);
+      if (stop && stop.routeKeys.length) {
+        STATE.map.closePopup();
+        showRoutesOnMap(stop.routeKeys, stop, true);
+      }
+    }
+  });
 
   STATE.map.on("click", (e) => {
-    // Only triggers if click wasn't captured by a marker
+    // If inspecting a route, accidental background clicks return to the original 15-min walk pin
+    if (STATE.activeRoutes.length > 0) {
+      clearActiveRoutes(true);
+      return;
+    }
+    // Only triggers if click wasn't captured by a marker or Kecamatan layer
     runServiceAreaCheck(e.latlng.lat, e.latlng.lng, "Dropped pin", `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`);
   });
 
@@ -304,6 +367,48 @@ function updateChoroplethLegend() {
   `;
 }
 
+function getRouteColor(rkey, fallbackMode) {
+  const r = STATE.routesByKey[rkey];
+  const modeId = (r && r.mode) || fallbackMode || "tj_brt";
+  return (STATE.modesById[modeId] && STATE.modesById[modeId].color) || "#0284C7";
+}
+
+function buildRouteChipHtml(rkey, stopId, fallbackMode, extraClass = "") {
+  const r = STATE.routesByKey[rkey];
+  const color = getRouteColor(rkey, fallbackMode);
+  const label = (r && r.name) || rkey;
+  const dirTitle = r ? `${r.from} ⇄ ${r.to}` : rkey;
+  const activeCls = STATE.activeRoutes.includes(rkey) ? " active" : "";
+  return `<button type="button" class="route-chip ${extraClass}${activeCls}" data-rkey="${escapeHtml(rkey)}" data-stop-id="${escapeHtml(stopId || "")}" style="--route-color:${color}" title="${escapeHtml(dirTitle)}">${escapeHtml(label)}</button>`;
+}
+
+function buildStopPopupHtml(st, matchInfo) {
+  const modeMeta = STATE.modesById[st.mode];
+  const walkInfo = matchInfo
+    ? `<br/><strong>Walk time:</strong> ~${matchInfo.walkMin} min (${tierLabel(matchInfo.tier)})`
+    : `<br/><em>Outside 15-min walkable road network</em>`;
+
+  let routesHtml = "";
+  if (st.routeKeys && st.routeKeys.length) {
+    const pills = st.routeKeys
+      .slice(0, 14)
+      .map((rk) => buildRouteChipHtml(rk, st.id, st.mode, "popup-route-btn"))
+      .join("");
+    const allBtn =
+      st.routeKeys.length > 1
+        ? `<div><button type="button" class="popup-all-routes-btn" data-stop-id="${escapeHtml(st.id)}">Show all ${st.routeKeys.length} routes from here</button></div>`
+        : "";
+    routesHtml = `<div class="popup-route-header">Routes (click to draw direction):</div><div class="popup-route-pills">${pills}</div>${allBtn}`;
+  }
+
+  return (
+    `<strong>${escapeHtml(st.name)}</strong><br/>` +
+    `<span style="color:${modeMeta.color};font-weight:700">${modeMeta.label}</span> · ${escapeHtml(st.kec)}` +
+    (matchInfo || STATE.saRoadEdges || STATE.saPolygons ? walkInfo : "") +
+    routesHtml
+  );
+}
+
 function renderStopsOnMap() {
   if (!STATE.stopsLayer) return;
   STATE.stopsLayer.clearLayers();
@@ -330,7 +435,6 @@ function renderStopsOnMap() {
     const isRail = st.mode === "mrt" || st.mode === "lrt" || st.mode === "krl" || st.mode === "train";
 
     if (hasSA && !isMatched) {
-      // Muted neutral dots outside the 15-min walk so the road network & Positron basemap stay clean
       const mutedMarker = L.circleMarker([st.lat, st.lon], {
         renderer: STATE.canvasRenderer,
         radius: isRail ? 3.5 : 2.0,
@@ -338,12 +442,7 @@ function renderStopsOnMap() {
         fillColor: STATE.theme === "dark" ? "#64748B" : "#94A3B8",
         fillOpacity: isRail ? 0.45 : 0.25,
       });
-      mutedMarker.bindPopup(
-        `<strong>${escapeHtml(st.name)}</strong><br/>` +
-          `<span style="color:${modeMeta.color};font-weight:700">${modeMeta.label}</span> · ${escapeHtml(st.kec)}` +
-          (st.routes ? `<br/><strong>Routes:</strong> ${escapeHtml(st.routes)}` : "") +
-          `<br/><em>Outside 15-min walkable road network</em>`
-      );
+      mutedMarker.bindPopup(() => buildStopPopupHtml(st, null), { maxWidth: 290 });
       mutedMarker.addTo(STATE.stopsLayer);
       continue;
     }
@@ -360,16 +459,7 @@ function renderStopsOnMap() {
       fillOpacity: isMatched ? 0.96 : 0.78,
     });
 
-    const walkInfo = matchInfo
-      ? `<br/><strong>Walk time:</strong> ~${matchInfo.walkMin} min (${tierLabel(matchInfo.tier)})`
-      : "";
-    const routeLine = st.routes ? `<br/><strong>Routes:</strong> ${escapeHtml(st.routes)}` : "";
-    marker.bindPopup(
-      `<strong>${escapeHtml(st.name)}</strong><br/>` +
-        `<span style="color:${modeMeta.color};font-weight:700">${modeMeta.label}</span> · ${escapeHtml(st.kec)}` +
-        routeLine +
-        walkInfo
-    );
+    marker.bindPopup(() => buildStopPopupHtml(st, matchInfo), { maxWidth: 290 });
     marker.addTo(STATE.stopsLayer);
   }
 }
@@ -411,7 +501,8 @@ function initControls() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mode-pill" + (active ? " active" : "");
-    btn.innerHTML = `<span class="mode-dot" style="background:${meta.color}"></span>${meta.short}`;
+    btn.dataset.mode = mid;
+    btn.innerHTML = `<span class="mode-dot" style="background:${meta.color}"></span><span>${meta.short}</span><span class="mode-pill-count hidden" id="mode-pill-cnt-${mid}">0</span>`;
     btn.title = isMikro
       ? "Mikrotrans auto-appears when zoomed in or inside Service Area; click to force citywide"
       : `Toggle ${meta.label}`;
@@ -431,6 +522,24 @@ function initControls() {
       renderStopsOnMap();
     });
     modeBox.appendChild(btn);
+  });
+
+  // Active route banner actions
+  document.getElementById("arb-fit-btn").addEventListener("click", () => {
+    if (STATE.routeLayer && STATE.routeLayer.getLayers().length) {
+      const b = STATE.routeLayer.getBounds();
+      if (b.isValid()) STATE.map.fitBounds(b, { padding: [46, 46], maxZoom: 15 });
+    }
+  });
+  document.getElementById("arb-walk-btn").addEventListener("click", () => clearActiveRoutes(true));
+  document.getElementById("arb-clear-btn").addEventListener("click", () => clearActiveRoutes(false));
+  document.getElementById("arb-stops-toggle").addEventListener("click", () => {
+    const toggleBtn = document.getElementById("arb-stops-toggle");
+    const listEl = document.getElementById("arb-stops-list");
+    const isHidden = listEl.classList.toggle("hidden");
+    toggleBtn.setAttribute("aria-expanded", String(!isHidden));
+    const count = toggleBtn.dataset.count || "0";
+    toggleBtn.innerHTML = `<span>Stations along route (${count})</span><span>${isHidden ? "▾" : "▴"}</span>`;
   });
 
   // Choropleth select
@@ -697,6 +806,9 @@ function clearServiceArea() {
   STATE.saRoadEdges = null;
   STATE.saMatches = [];
   STATE.currentPin = null;
+  STATE.selectedModeFilter = null;
+  clearActiveRoutes();
+  updateModeToggleCounts(null);
   STATE.saLayer.clearLayers();
   STATE.circleLayer.clearLayers();
   if (STATE.pinMarker) {
@@ -714,6 +826,8 @@ function clearServiceArea() {
   document.getElementById("metric-connectivity").textContent = "—";
   document.getElementById("metric-stops-count").textContent = "—";
   document.getElementById("mode-breakdown").innerHTML = "";
+  document.getElementById("mode-routes-drawer").classList.add("hidden");
+  document.getElementById("mode-routes-drawer").innerHTML = "";
   document.getElementById("reachable-stops-list").innerHTML = "";
   setRoutingStatus("Cleared — click map or search");
   renderStopsOnMap();
@@ -721,6 +835,8 @@ function clearServiceArea() {
 
 async function runServiceAreaCheck(lat, lon, label, subtitle = "") {
   STATE.currentPin = { lat, lon, name: label, sub: subtitle };
+  STATE.selectedModeFilter = null;
+  clearActiveRoutes();
   setRoutingStatus("Tracing walkable road network…", "busy");
 
   if (STATE.pinMarker) {
@@ -1134,12 +1250,35 @@ function evaluateStopsInsideServiceArea(lat, lon, label, subtitle, isFallback) {
     : "—";
   document.getElementById("metric-stops-count").textContent = matches.length.toLocaleString();
 
+  updateModeToggleCounts(byMode);
+  renderModeBreakdownCards(byMode);
+  renderModeRoutesDrawer();
+  renderReachableStopsList();
+}
+
+function updateModeToggleCounts(byMode) {
+  MODE_ORDER.forEach((mid) => {
+    const el = document.getElementById(`mode-pill-cnt-${mid}`);
+    if (!el) return;
+    if (!byMode) {
+      el.classList.add("hidden");
+      el.textContent = "0";
+      return;
+    }
+    const cnt = byMode[mid] ? byMode[mid].count : 0;
+    el.textContent = cnt;
+    el.classList.toggle("hidden", cnt === 0);
+  });
+}
+
+function renderModeBreakdownCards(byMode) {
   const mb = document.getElementById("mode-breakdown");
   mb.innerHTML = MODE_ORDER.map((mid) => {
     const meta = STATE.modesById[mid];
     const info = byMode[mid];
+    const isActive = STATE.selectedModeFilter === mid;
     return `
-      <div class="mode-card ${info.count === 0 ? "zero" : ""}">
+      <button type="button" class="mode-card ${info.count === 0 ? "zero" : ""}${isActive ? " active" : ""}" data-mode="${mid}" style="${isActive ? `border-color:${meta.color};color:${meta.color}` : ""}" ${info.count === 0 ? "disabled" : ""}>
         <span class="mode-card-left">
           <span class="mode-dot" style="background:${meta.color}"></span>
           <span>${meta.short}</span>
@@ -1148,16 +1287,568 @@ function evaluateStopsInsideServiceArea(lat, lon, label, subtitle, isFallback) {
           <strong>${info.count}</strong>
           ${info.minTier ? ` · ≤${info.minTier}m` : ""}
         </span>
-      </div>
+      </button>
     `;
   }).join("");
 
-  renderReachableStopsList();
+  mb.querySelectorAll(".mode-card[data-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mid = btn.dataset.mode;
+      STATE.selectedModeFilter = STATE.selectedModeFilter === mid ? null : mid;
+      renderModeBreakdownCards(byMode);
+      renderModeRoutesDrawer();
+      renderReachableStopsList();
+    });
+  });
+}
+
+function renderModeRoutesDrawer() {
+  const drawer = document.getElementById("mode-routes-drawer");
+  const mid = STATE.selectedModeFilter;
+  if (!mid) {
+    drawer.classList.add("hidden");
+    drawer.innerHTML = "";
+    return;
+  }
+
+  const meta = STATE.modesById[mid];
+  const modeMatches = STATE.saMatches.filter((m) => m.stop.mode === mid);
+  const routeKeysOrdered = [];
+  const routeFirstStop = new Map();
+
+  for (const m of modeMatches) {
+    for (const rk of m.stop.routeKeys || []) {
+      if (!routeFirstStop.has(rk)) {
+        routeFirstStop.set(rk, m);
+        routeKeysOrdered.push(rk);
+      }
+    }
+  }
+
+  if (!routeKeysOrdered.length) {
+    drawer.classList.add("hidden");
+    drawer.innerHTML = "";
+    return;
+  }
+
+  const pillsHtml = routeKeysOrdered
+    .slice(0, 24)
+    .map((rk) => {
+      const match = routeFirstStop.get(rk);
+      return buildRouteChipHtml(rk, match.stop.id, mid, "drawer-route-btn");
+    })
+    .join("");
+
+  drawer.classList.remove("hidden");
+  drawer.innerHTML = `
+    <div class="mrd-head">
+      <span class="mrd-title" style="color:${meta.color}">${escapeHtml(meta.label)} · ${routeKeysOrdered.length} active route${routeKeysOrdered.length > 1 ? "s" : ""}</span>
+      <div class="mrd-actions">
+        ${routeKeysOrdered.length > 1 ? `<button type="button" class="mrd-btn" id="mrd-show-all">Show all</button>` : ""}
+        <button type="button" class="mrd-btn" id="mrd-reset">All modes</button>
+      </div>
+    </div>
+    <div class="mrd-pills">${pillsHtml}</div>
+  `;
+
+  drawer.querySelectorAll(".drawer-route-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const rkey = btn.dataset.rkey;
+      const stop = STATE.stopsById.get(btn.dataset.stopId) || null;
+      showRoutesOnMap([rkey], stop, true);
+    });
+  });
+
+  const showAllBtn = document.getElementById("mrd-show-all");
+  if (showAllBtn) {
+    showAllBtn.addEventListener("click", () => {
+      const firstStop = modeMatches[0] ? modeMatches[0].stop : null;
+      showRoutesOnMap(routeKeysOrdered.slice(0, 18), firstStop, true);
+    });
+  }
+
+  document.getElementById("mrd-reset").addEventListener("click", () => {
+    STATE.selectedModeFilter = null;
+    document.querySelectorAll(".mode-card.active").forEach((c) => {
+      c.classList.remove("active");
+      c.style.borderColor = "";
+      c.style.color = "";
+    });
+    renderModeRoutesDrawer();
+    renderReachableStopsList();
+  });
+}
+
+function setRouteFocusMode(active) {
+  if (!STATE.map) return;
+  const walkLayers = [STATE.circleLayer, STATE.saLayer, STATE.stopsLayer];
+  for (const lyr of walkLayers) {
+    if (!lyr) continue;
+    if (active) {
+      if (STATE.map.hasLayer(lyr)) STATE.map.removeLayer(lyr);
+    } else {
+      if (!STATE.map.hasLayer(lyr)) lyr.addTo(STATE.map);
+    }
+  }
+  const legendEl = document.getElementById("map-legend");
+  if (legendEl) legendEl.classList.toggle("hidden", active);
+  const tipEl = document.querySelector(".map-tip");
+  if (tipEl) {
+    tipEl.textContent = active
+      ? "Route focus active — click any station dot to inspect it, or click empty map space to return to your 15-min walk pin."
+      : "Tip: Click anywhere on the map or drag the orange pin to test a new spot.";
+  }
+}
+
+function clearActiveRoutes(zoomToWalk = false) {
+  STATE.activeRoutes = [];
+  STATE.activeBoardStop = null;
+  STATE.walkRouteReqId += 1;
+  if (STATE.routeLayer) STATE.routeLayer.clearLayers();
+  if (STATE.walkConnectorLayer) STATE.walkConnectorLayer.clearLayers();
+  if (STATE.routeStopsLayer) STATE.routeStopsLayer.clearLayers();
+  if (STATE.routeTerminalLayer) STATE.routeTerminalLayer.clearLayers();
+
+  setRouteFocusMode(false);
+
+  const bar = document.getElementById("active-route-bar");
+  if (bar) bar.classList.add("hidden");
+  const listEl = document.getElementById("arb-stops-list");
+  if (listEl) {
+    listEl.classList.add("hidden");
+    listEl.innerHTML = "";
+  }
+  const toggleBtn = document.getElementById("arb-stops-toggle");
+  if (toggleBtn) {
+    toggleBtn.classList.add("hidden");
+    toggleBtn.setAttribute("aria-expanded", "false");
+  }
+
+  refreshRouteChipHighlights();
+  if (zoomToWalk && STATE.saLayer && STATE.saLayer.getBounds().isValid()) {
+    STATE.map.fitBounds(STATE.saLayer.getBounds(), { padding: [36, 36], maxZoom: 15 });
+  }
+}
+
+function refreshRouteChipHighlights() {
+  const activeSet = new Set(STATE.activeRoutes);
+  document.querySelectorAll(".route-chip[data-rkey]").forEach((el) => {
+    el.classList.toggle("active", activeSet.has(el.dataset.rkey));
+  });
+}
+
+function getFarthestPointIndex(seg) {
+  if (!seg || seg.length < 2) return 0;
+  const p0 = seg[0];
+  let bestIdx = seg.length - 1;
+  let maxDistSq = -1;
+  for (let i = 1; i < seg.length; i++) {
+    const dLat = seg[i][0] - p0[0];
+    const dLon = (seg[i][1] - p0[1]) * 0.994;
+    const d2 = dLat * dLat + dLon * dLon;
+    if (d2 > maxDistSq) {
+      maxDistSq = d2;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+function projectPointOntoLine(lat, lon, seg) {
+  if (!seg || seg.length < 2) return { cumDist: 0, perpDist: 0 };
+  let cumTotal = 0;
+  let bestCum = 0;
+  let bestDistSq = Infinity;
+  const cosLat = 0.994;
+
+  for (let i = 0; i < seg.length - 1; i++) {
+    const ax = seg[i][1] * cosLat;
+    const ay = seg[i][0];
+    const bx = seg[i + 1][1] * cosLat;
+    const by = seg[i + 1][0];
+    const px = lon * cosLat;
+    const py = lat;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+    const segLenSq = dx * dx + dy * dy;
+    const segLen = Math.sqrt(segLenSq);
+    const t = segLenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / segLenSq)) : 0;
+    const cx = ax + t * dx;
+    const cy = ay + t * dy;
+    const dSq = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      bestCum = cumTotal + t * segLen;
+    }
+    cumTotal += segLen;
+  }
+  return { cumDist: bestCum, perpDist: Math.sqrt(bestDistSq) };
+}
+
+function findTerminalStopMatch(termName, stops) {
+  const tl = (termName || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").trim();
+  if (!tl) return null;
+  let best = stops.find((s) => s.name.toLowerCase() === tl);
+  if (best) return best;
+  const words = tl.split(/\s+/).filter((w) => w.length >= 3 && w !== "via" && w !== "hal" && w !== "stasiun");
+  best = stops.find((s) => s.name.toLowerCase().includes(tl) || tl.includes(s.name.toLowerCase()));
+  if (best) return best;
+  for (const w of words) {
+    const hit = stops.find((s) => s.name.toLowerCase().includes(w));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function getOrientedEndpoints(r, matchingStops) {
+  if (!r || !r.coords || !r.coords.length) return null;
+  const seg = r.coords[0];
+  if (seg.length < 2) return null;
+  let pA = [seg[0][0], seg[0][1]];
+  let pB = [seg[seg.length - 1][0], seg[seg.length - 1][1]];
+  let projSeg = seg;
+
+  const sameEnd = Math.hypot(pA[0] - pB[0], (pA[1] - pB[1]) * 0.994) < 0.003;
+  if (sameEnd && r.from !== r.to && seg.length >= 3) {
+    const farIdx = getFarthestPointIndex(seg);
+    pB = [seg[farIdx][0], seg[farIdx][1]];
+    projSeg = seg.slice(0, farIdx + 1);
+  }
+
+  // Align pA -> r.from and pB -> r.to using actual stop coordinates when available
+  const sFrom = findTerminalStopMatch(r.from, matchingStops);
+  const sTo = findTerminalStopMatch(r.to, matchingStops);
+  if (sFrom && sTo && sFrom.id !== sTo.id) {
+    const dFromA = Math.hypot(sFrom.lat - pA[0], sFrom.lon - pA[1]);
+    const dFromB = Math.hypot(sFrom.lat - pB[0], sFrom.lon - pB[1]);
+    const dToA = Math.hypot(sTo.lat - pA[0], sTo.lon - pA[1]);
+    const dToB = Math.hypot(sTo.lat - pB[0], sTo.lon - pB[1]);
+    if (dFromB + dToA < dFromA + dToB) {
+      [pA, pB] = [pB, pA];
+      projSeg = [...projSeg].reverse();
+    }
+  }
+  return { pA, pB, projSeg };
+}
+
+function getOrderedStopsForRoute(rkey) {
+  const r = STATE.routesByKey[rkey];
+  const matching = STATE.stops.filter((st) => st.routeKeys && st.routeKeys.includes(rkey));
+  if (!r || !r.coords || !r.coords.length || !matching.length) return matching;
+
+  const oriented = getOrientedEndpoints(r, matching);
+  const projSeg = oriented ? oriented.projSeg : r.coords[0];
+
+  const scored = matching.map((st) => {
+    const p = projectPointOntoLine(st.lat, st.lon, projSeg);
+    return { st, cumDist: p.cumDist };
+  });
+  scored.sort((a, b) => a.cumDist - b.cumDist);
+  return scored.map((x) => x.st);
+}
+
+function renderWalkPolyline(coordsLatLon, boardStop, walkMin, distM) {
+  if (!STATE.walkConnectorLayer) return;
+  STATE.walkConnectorLayer.clearLayers();
+
+  L.polyline(coordsLatLon, {
+    renderer: STATE.canvasRenderer,
+    color: "#FFFFFF",
+    weight: 6.2,
+    opacity: 0.92,
+    dashArray: "6 8",
+    lineCap: "round",
+    lineJoin: "round",
+    interactive: false,
+  }).addTo(STATE.walkConnectorLayer);
+
+  const line = L.polyline(coordsLatLon, {
+    renderer: STATE.canvasRenderer,
+    color: "#FF8C2E",
+    weight: 3.4,
+    opacity: 0.96,
+    dashArray: "6 8",
+    lineCap: "round",
+    lineJoin: "round",
+  });
+
+  const labelText =
+    walkMin && distM
+      ? `Walk to ${escapeHtml(boardStop.name)} · ${walkMin} min (${distM} m)`
+      : `Walk to ${escapeHtml(boardStop.name)}`;
+  line.bindTooltip(labelText, { sticky: true });
+  line.addTo(STATE.walkConnectorLayer);
+
+  const subEl = document.getElementById("arb-sub");
+  if (subEl && STATE.activeBoardStop && STATE.activeBoardStop.stop.id === boardStop.id) {
+    subEl.textContent =
+      walkMin && distM
+        ? `Board at ${boardStop.name} · ${walkMin} min walk (${distM} m)`
+        : `Board at ${boardStop.name}`;
+  }
+}
+
+async function drawRealWalkConnector(pin, boardStop) {
+  if (!STATE.walkConnectorLayer) return;
+  STATE.walkConnectorLayer.clearLayers();
+  if (!pin || !boardStop) return;
+
+  const cacheKey = `${pin.lat.toFixed(5)},${pin.lon.toFixed(5)}->${boardStop.id}`;
+  const reqId = ++STATE.walkRouteReqId;
+
+  if (STATE.walkRouteCache.has(cacheKey)) {
+    const cached = STATE.walkRouteCache.get(cacheKey);
+    renderWalkPolyline(cached.coordsLatLon, boardStop, cached.walkMin, cached.distM);
+    return;
+  }
+
+  try {
+    const resp = await fetch("https://valhalla1.openstreetmap.de/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        locations: [
+          { lat: pin.lat, lon: pin.lon },
+          { lat: boardStop.lat, lon: boardStop.lon },
+        ],
+        costing: "pedestrian",
+        format: "osrm",
+        shape_format: "geojson",
+      }),
+    });
+    if (!resp.ok) throw new Error(`Valhalla route HTTP ${resp.status}`);
+    const data = await resp.json();
+    const route = data.routes && data.routes[0];
+    if (!route || !route.geometry || !route.geometry.coordinates || route.geometry.coordinates.length < 2) {
+      throw new Error("Missing pedestrian route coordinates");
+    }
+
+    const coordsLatLon = route.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+    const walkMin = Math.max(1, Math.round(route.duration / 60));
+    const distM = Math.round(route.distance);
+    STATE.walkRouteCache.set(cacheKey, { coordsLatLon, walkMin, distM });
+
+    if (reqId !== STATE.walkRouteReqId || STATE.activeRoutes.length === 0) return;
+    renderWalkPolyline(coordsLatLon, boardStop, walkMin, distM);
+  } catch (err) {
+    console.warn("Valhalla pedestrian route fallback:", err);
+    if (reqId !== STATE.walkRouteReqId || STATE.activeRoutes.length === 0) return;
+    renderWalkPolyline(
+      [
+        [pin.lat, pin.lon],
+        [boardStop.lat, boardStop.lon],
+      ],
+      boardStop,
+      null,
+      null
+    );
+  }
+}
+
+function showRoutesOnMap(routeKeys, boardStop = null, fitBounds = true) {
+  const validKeys = (routeKeys || []).filter((k) => STATE.routesByKey[k] && STATE.routesByKey[k].coords && STATE.routesByKey[k].coords.length);
+  if (!validKeys.length) {
+    setRoutingStatus("No route geometry available for this selection", "warn");
+    return;
+  }
+
+  STATE.activeRoutes = validKeys;
+  const boardMatch = boardStop ? STATE.saMatches.find((m) => m.stop.id === boardStop.id) : null;
+  STATE.activeBoardStop = boardStop ? { stop: boardStop, walkMin: boardMatch ? boardMatch.walkMin : null } : null;
+
+  // Enter Route Focus Mode: hide 15-min walk roads, 1.2km circle, unrelated stops, and legend
+  setRouteFocusMode(true);
+
+  STATE.routeLayer.clearLayers();
+  STATE.walkConnectorLayer.clearLayers();
+  STATE.routeStopsLayer.clearLayers();
+  STATE.routeTerminalLayer.clearLayers();
+
+  // Real street-following pedestrian route in pin orange (#FF8C2E)
+  if (STATE.currentPin && boardStop) {
+    drawRealWalkConnector(STATE.currentPin, boardStop);
+  }
+
+  const drawnStops = new Map(); // stopId -> { st, color }
+
+  for (const rkey of validKeys) {
+    const r = STATE.routesByKey[rkey];
+    const color = getRouteColor(rkey, r.mode);
+
+    for (const seg of r.coords) {
+      L.polyline(seg, {
+        renderer: STATE.canvasRenderer,
+        color: "#FFFFFF",
+        weight: validKeys.length === 1 ? 8.0 : 5.5,
+        opacity: 0.92,
+        lineCap: "round",
+        lineJoin: "round",
+        interactive: false,
+      }).addTo(STATE.routeLayer);
+
+      L.polyline(seg, {
+        renderer: STATE.canvasRenderer,
+        color,
+        weight: validKeys.length === 1 ? 4.6 : 3.2,
+        opacity: 0.96,
+        lineCap: "round",
+        lineJoin: "round",
+      })
+        .bindTooltip(`<strong>${escapeHtml(r.name)}</strong> · ${escapeHtml(r.from)} ⇄ ${escapeHtml(r.to)}`, { sticky: true })
+        .addTo(STATE.routeLayer);
+    }
+
+    // Collect stops along this route
+    const routeStops = validKeys.length === 1 ? getOrderedStopsForRoute(rkey) : STATE.stops.filter((s) => s.routeKeys && s.routeKeys.includes(rkey));
+    for (const st of routeStops) {
+      if (!drawnStops.has(st.id)) {
+        drawnStops.set(st.id, { st, color });
+      }
+    }
+
+    // Show From / To terminal badges when viewing a single route (oriented to real terminal stops)
+    if (validKeys.length === 1 && r.terminals && r.terminals.length >= 2) {
+      const oriented = getOrientedEndpoints(r, routeStops);
+      const tFrom = oriented ? [oriented.pA[0], oriented.pA[1], r.from] : r.terminals[0];
+      const tTo = oriented ? [oriented.pB[0], oriented.pB[1], r.to] : r.terminals[1];
+      const stillLoop = Math.abs(tFrom[0] - tTo[0]) < 0.001 && Math.abs(tFrom[1] - tTo[1]) < 0.001;
+      const addTerminal = (lat, lon, prefix, name) => {
+        const icon = L.divIcon({
+          className: "route-terminal-icon",
+          html: `<span class="route-terminal-badge" style="background:${color}">${prefix}: ${escapeHtml(name)}</span>`,
+          iconSize: null,
+          iconAnchor: [12, 12],
+        });
+        L.marker([lat, lon], { icon, interactive: false }).addTo(STATE.routeTerminalLayer);
+      };
+      addTerminal(tFrom[0], tFrom[1], stillLoop ? "LOOP" : "FROM", tFrom[2]);
+      if (!stillLoop) {
+        addTerminal(tTo[0], tTo[1], "TO", tTo[2]);
+      }
+    }
+  }
+
+  // Render station dots along the active route(s)
+  const orderedSingleStops = validKeys.length === 1 ? getOrderedStopsForRoute(validKeys[0]) : [];
+  const matchLookup = new Map(STATE.saMatches.map((m) => [m.stop.id, m]));
+
+  for (const { st, color } of drawnStops.values()) {
+    const isBoard = boardStop && st.id === boardStop.id;
+    const marker = L.circleMarker([st.lat, st.lon], {
+      renderer: STATE.canvasRenderer,
+      radius: isBoard ? 7.2 : validKeys.length === 1 ? 5.6 : 4.2,
+      color: isBoard ? "#FFFFFF" : color,
+      weight: isBoard ? 2.4 : 2.2,
+      fillColor: isBoard ? color : "#FFFFFF",
+      fillOpacity: 1,
+    });
+    marker.bindTooltip(
+      isBoard ? `<strong>${escapeHtml(st.name)}</strong> ★ Board here` : escapeHtml(st.name),
+      { direction: "top", offset: [0, -6] }
+    );
+    marker.bindPopup(() => buildStopPopupHtml(st, matchLookup.get(st.id) || null), { maxWidth: 290 });
+    marker.addTo(STATE.routeStopsLayer);
+  }
+
+  // Update floating Active Route Direction Banner
+  const bar = document.getElementById("active-route-bar");
+  const badge = document.getElementById("arb-badge");
+  const dirEl = document.getElementById("arb-direction");
+  const subEl = document.getElementById("arb-sub");
+  const multiEl = document.getElementById("arb-multi");
+  const toggleBtn = document.getElementById("arb-stops-toggle");
+  const listEl = document.getElementById("arb-stops-list");
+
+  if (validKeys.length === 1) {
+    const r = STATE.routesByKey[validKeys[0]];
+    const mMeta = STATE.modesById[r.mode] || { short: r.mode, color: "#0284C7" };
+    badge.textContent = `${mMeta.short} · ${r.name}`;
+    badge.style.background = mMeta.color;
+    dirEl.textContent = `${r.from} ⇄ ${r.to}`;
+    multiEl.classList.add("hidden");
+    multiEl.innerHTML = "";
+
+    // Populate ordered stations drawer toggle
+    if (orderedSingleStops.length > 0) {
+      toggleBtn.classList.remove("hidden");
+      toggleBtn.dataset.count = String(orderedSingleStops.length);
+      toggleBtn.setAttribute("aria-expanded", "false");
+      toggleBtn.innerHTML = `<span>Stations along route (${orderedSingleStops.length})</span><span>▾</span>`;
+      listEl.classList.add("hidden");
+      listEl.innerHTML = orderedSingleStops
+        .map((st, idx) => {
+          const isBoard = boardStop && st.id === boardStop.id;
+          return `
+            <li class="arb-stop-row${isBoard ? " board-stop" : ""}" data-stop-id="${escapeHtml(st.id)}" style="--route-color:${mMeta.color}">
+              <span class="arb-stop-num">${idx + 1}</span>
+              <span class="arb-stop-dot"></span>
+              <span class="arb-stop-name" title="${escapeHtml(st.name)}">${escapeHtml(st.name)}</span>
+              ${isBoard ? `<span class="arb-board-tag">Board here</span>` : ""}
+            </li>
+          `;
+        })
+        .join("");
+
+      listEl.querySelectorAll(".arb-stop-row").forEach((row) => {
+        row.addEventListener("click", () => {
+          const st = STATE.stopsById.get(row.dataset.stopId);
+          if (!st) return;
+          STATE.map.setView([st.lat, st.lon], Math.max(STATE.map.getZoom(), 15));
+          L.popup({ maxWidth: 290 })
+            .setLatLng([st.lat, st.lon])
+            .setContent(buildStopPopupHtml(st, matchLookup.get(st.id) || null))
+            .openOn(STATE.map);
+        });
+      });
+    } else {
+      toggleBtn.classList.add("hidden");
+      listEl.classList.add("hidden");
+    }
+  } else {
+    const primaryMode = boardStop ? boardStop.mode : STATE.routesByKey[validKeys[0]].mode;
+    const mMeta = STATE.modesById[primaryMode] || { short: "Transit", color: "#0284C7" };
+    badge.textContent = `${validKeys.length} Active Routes`;
+    badge.style.background = mMeta.color;
+    dirEl.textContent = boardStop ? `All routes serving ${boardStop.name}` : `${validKeys.length} routes shown across Jakarta`;
+    toggleBtn.classList.add("hidden");
+    listEl.classList.add("hidden");
+    multiEl.classList.remove("hidden");
+    multiEl.innerHTML = validKeys
+      .map((rk) => buildRouteChipHtml(rk, boardStop ? boardStop.id : "", primaryMode, "arb-solo-btn"))
+      .join("");
+    multiEl.querySelectorAll(".arb-solo-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        showRoutesOnMap([btn.dataset.rkey], boardStop, true);
+      });
+    });
+  }
+
+  if (STATE.activeBoardStop) {
+    const walkTxt = STATE.activeBoardStop.walkMin ? ` · ~${STATE.activeBoardStop.walkMin} min walk` : "";
+    subEl.textContent = `Board at ${STATE.activeBoardStop.stop.name}${walkTxt}`;
+  } else {
+    subEl.textContent = "Route focus active — click any station dot to inspect transfers";
+  }
+
+  bar.classList.remove("hidden");
+  refreshRouteChipHighlights();
+
+  if (fitBounds && STATE.routeLayer.getLayers().length) {
+    const bounds = STATE.routeLayer.getBounds();
+    if (STATE.currentPin) bounds.extend([STATE.currentPin.lat, STATE.currentPin.lon]);
+    if (bounds.isValid()) {
+      STATE.map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
+    }
+  }
 }
 
 function renderReachableStopsList() {
   const ul = document.getElementById("reachable-stops-list");
   let list = STATE.saMatches;
+  if (STATE.selectedModeFilter) {
+    list = list.filter((m) => m.stop.mode === STATE.selectedModeFilter);
+  }
   if (STATE.stopFilter === "5") {
     list = list.filter((m) => m.tier === 5);
   } else if (STATE.stopFilter === "rapid") {
@@ -1175,15 +1866,26 @@ function renderReachableStopsList() {
     .slice(0, 120)
     .map(({ stop, tier, walkMin }) => {
       const meta = STATE.modesById[stop.mode];
-      const routesText = stop.routes ? escapeHtml(stop.routes) : meta.label;
+      const keys = stop.routeKeys || [];
+      const pillsHtml = keys
+        .slice(0, 8)
+        .map((rk) => buildRouteChipHtml(rk, stop.id, stop.mode, "stop-route-btn"))
+        .join("");
+      const moreCount = keys.length > 8 ? `<span class="stop-item-routes">+${keys.length - 8} more</span>` : "";
+      const allChip =
+        keys.length > 1
+          ? `<button type="button" class="route-chip route-chip-all stop-all-routes-btn" data-stop-id="${escapeHtml(stop.id)}" title="Show all ${keys.length} routes from ${escapeHtml(stop.name)}">All</button>`
+          : "";
+
       return `
-        <li class="stop-item" data-lat="${stop.lat}" data-lon="${stop.lon}" data-name="${escapeHtml(stop.name)}" data-mode="${escapeHtml(meta.label)}" data-routes="${routesText}" data-tier="${tier}" data-walk="${walkMin}">
-          <div>
+        <li class="stop-item" data-stop-id="${escapeHtml(stop.id)}">
+          <div style="min-width:0;flex:1">
             <div class="stop-item-name">
               <span class="mode-dot" style="background:${meta.color}"></span>
               <span>${escapeHtml(stop.name)}</span>
             </div>
-            <div class="stop-item-routes">${meta.short} · ${routesText}</div>
+            <div class="stop-item-routes">${meta.short} · ${escapeHtml(stop.kec)}</div>
+            ${keys.length ? `<div class="stop-route-pills">${pillsHtml}${allChip}${moreCount}</div>` : ""}
           </div>
           <span class="tier-tag tier-${tier}">~${walkMin} min</span>
         </li>
@@ -1191,17 +1893,38 @@ function renderReachableStopsList() {
     })
     .join("");
 
-  ul.querySelectorAll(".stop-item[data-lat]").forEach((li) => {
+  ul.querySelectorAll(".stop-route-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const stop = STATE.stopsById.get(btn.dataset.stopId) || null;
+      showRoutesOnMap([btn.dataset.rkey], stop, true);
+    });
+  });
+
+  ul.querySelectorAll(".stop-all-routes-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const stop = STATE.stopsById.get(btn.dataset.stopId);
+      if (stop && stop.routeKeys.length) {
+        showRoutesOnMap(stop.routeKeys, stop, true);
+      }
+    });
+  });
+
+  ul.querySelectorAll(".stop-item[data-stop-id]").forEach((li) => {
     li.addEventListener("click", () => {
-      const lat = parseFloat(li.dataset.lat);
-      const lon = parseFloat(li.dataset.lon);
-      STATE.map.setView([lat, lon], Math.max(STATE.map.getZoom(), 16));
-      L.popup()
-        .setLatLng([lat, lon])
-        .setContent(`<strong>${li.dataset.name}</strong><br/>${li.dataset.mode}<br/>${li.dataset.routes}<br/><b>~${li.dataset.walk} min walk</b>`)
+      const st = STATE.stopsById.get(li.dataset.stopId);
+      if (!st) return;
+      const matchInfo = STATE.saMatches.find((m) => m.stop.id === st.id) || null;
+      STATE.map.setView([st.lat, st.lon], Math.max(STATE.map.getZoom(), 16));
+      L.popup({ maxWidth: 290 })
+        .setLatLng([st.lat, st.lon])
+        .setContent(buildStopPopupHtml(st, matchInfo))
         .openOn(STATE.map);
     });
   });
+
+  refreshRouteChipHighlights();
 }
 
 function tierLabel(tier) {

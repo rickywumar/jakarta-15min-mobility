@@ -167,6 +167,23 @@
       <div class="checker-grid">
         <div class="map-shell">
           <div id="map" role="application" aria-label="Jakarta interactive 15-minute walking service area map"></div>
+          <div class="active-route-bar hidden" id="active-route-bar" role="region" aria-label="Active transit route direction">
+            <div class="arb-main">
+              <span class="arb-badge" id="arb-badge">TJ BRT · 1</span>
+              <div class="arb-info">
+                <div class="arb-direction" id="arb-direction">Blok M ⇄ Kota</div>
+                <div class="arb-sub" id="arb-sub">Board at Bundaran HI Astra</div>
+              </div>
+            </div>
+            <div class="arb-multi hidden" id="arb-multi"></div>
+            <button type="button" class="arb-stops-toggle hidden" id="arb-stops-toggle" aria-expanded="false"></button>
+            <ol class="arb-stops-list hidden" id="arb-stops-list"></ol>
+            <div class="arb-actions">
+              <button type="button" class="arb-btn" id="arb-fit-btn">Fit route</button>
+              <button type="button" class="arb-btn" id="arb-walk-btn">Back to 15m walk</button>
+              <button type="button" class="arb-btn arb-close" id="arb-clear-btn">Clear ×</button>
+            </div>
+          </div>
           <div class="map-legend" id="map-legend">
             <div class="legend-title">Walkable Road Network</div>
             <div class="legend-items">
@@ -206,9 +223,11 @@
           </div>
 
           <div class="mode-breakdown-wrap">
-            <div class="panel-subhead">Reachable by mode</div>
+            <div class="panel-subhead">Reachable by mode <span style="font-weight:500;text-transform:none">(click a mode to explore routes)</span></div>
             <div class="mode-breakdown-grid" id="mode-breakdown"></div>
           </div>
+
+          <div class="mode-routes-drawer hidden" id="mode-routes-drawer"></div>
 
           <div class="stops-list-wrap">
             <div class="stops-list-head">

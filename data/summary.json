@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-25 20:52 UTC",
+  "generated_at": "2026-11-26 09:06 UTC",
   "kecamatan_count": 42,
   "kota_count": 5,
   "total_area_km2": 643.79,
@@ -55,49 +55,49 @@
       "label": "MRT Jakarta",
       "short": "MRT",
       "rapid": true,
-      "color": "#FF6B6B"
+      "color": "#DC2626"
     },
     {
       "id": "lrt",
       "label": "LRT Jakarta / Jabodebek",
       "short": "LRT",
       "rapid": true,
-      "color": "#C084FC"
+      "color": "#9333EA"
     },
     {
       "id": "krl",
       "label": "KRL Commuter Line",
       "short": "KRL",
       "rapid": true,
-      "color": "#F59E0B"
+      "color": "#D97706"
     },
     {
       "id": "train",
       "label": "KAI Intercity / Whoosh",
       "short": "Train",
       "rapid": true,
-      "color": "#EC4899"
+      "color": "#DB2777"
     },
     {
       "id": "tj_brt",
       "label": "TransJakarta BRT",
       "short": "TJ BRT",
       "rapid": true,
-      "color": "#38BDF8"
+      "color": "#0284C7"
     },
     {
       "id": "tj_nonbrt",
       "label": "TransJakarta Non-BRT",
       "short": "Non-BRT",
       "rapid": false,
-      "color": "#34D399"
+      "color": "#059669"
     },
     {
       "id": "mikrotrans",
       "label": "Mikrotrans (JakLingko)",
       "short": "Mikrotrans",
       "rapid": false,
-      "color": "#A3E635"
+      "color": "#65A30D"
     }
   ],
   "presets": [
@@ -150,6 +150,7 @@
       "lon": 106.94386
     }
   ],
+  "routes_count": 253,
   "sources": {
     "transjakarta": "PT TransJakarta Official GTFS (CC BY 4.0)",
     "rail": "OpenStreetMap Overpass + Verified Active MRT/LRT/KAI Registry",
